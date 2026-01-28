@@ -20,7 +20,6 @@ const ReviewSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Booking",
       required: true,
-      unique: true, // One review per booking
       index: true,
     },
 
