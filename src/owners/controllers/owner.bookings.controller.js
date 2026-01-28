@@ -166,3 +166,83 @@ exports.completeOwnerBooking = async function completeOwnerBooking(req, res) {
     return res.status(500).json({ message: "Failed to update booking status" });
   }
 };
+
+exports.updateOwnerBookingStatus = async function updateOwnerBookingStatus(req, res) {
+  try {
+    const ownerId = uid(req);
+    if (!ownerId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    const validStatuses = ['pending_payment', 'paid', 'awaiting_payment', 'completed', 'cancelled'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        message: "Invalid status. Must be one of: " + validStatuses.join(', ') 
+      });
+    }
+
+    const booking = await Booking.findById(id)
+      .populate({
+        path: "listingId",
+        select: "owner",
+      })
+      .exec();
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    if (
+      !booking.listingId ||
+      String(booking.listingId.owner) !== String(ownerId)
+    ) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    // Validate status transitions
+    const currentStatus = booking.status;
+    const allowedTransitions = {
+      paid: ['completed', 'cancelled'], // Paid bookings can be completed or cancelled
+      pending_payment: ['cancelled'], // Pending payment can only be cancelled
+      awaiting_payment: ['cancelled'], // Awaiting payment can only be cancelled
+      completed: [], // Cannot change from completed
+      cancelled: [], // Cannot change from cancelled
+    };
+
+    const allowed = allowedTransitions[currentStatus] || [];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ 
+        message: `Cannot change status from ${currentStatus} to ${status}` 
+      });
+    }
+
+    // Update status
+    booking.status = status;
+    
+    // Set timestamps based on status
+    if (status === 'completed' && !booking.completedAt) {
+      booking.completedAt = new Date();
+    }
+    if (status === 'cancelled' && !booking.cancelledAt) {
+      booking.cancelledAt = new Date();
+    }
+
+    await booking.save();
+
+    const obj = booking.toObject ? booking.toObject() : booking;
+    obj.id = obj._id;
+    if (obj.listingId && obj.listingId._id) obj.listing = obj.listingId;
+
+    return res.json({
+      message: `Booking status changed to ${status}`,
+      booking: obj,
+    });
+  } catch (err) {
+    console.error("updateOwnerBookingStatus error:", err);
+    return res.status(500).json({ message: "Failed to update booking status" });
+  }
+};

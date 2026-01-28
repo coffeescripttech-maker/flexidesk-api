@@ -6,6 +6,7 @@ const {
   getOwnerBookingsMine,
   getOwnerBookingOne,
   completeOwnerBooking,
+  updateOwnerBookingStatus,
 } = require("../controllers/owner.bookings.controller");
 
 const { requireAuth } = require("../../middleware/auth");
@@ -15,5 +16,6 @@ router.get("/mine", requireAuth, getOwnerBookingsMine);
 
 router.get("/:id", requireAuth, getOwnerBookingOne);
 router.post("/:id/complete", requireAuth, completeOwnerBooking);
+router.patch("/:id/status", requireAuth, updateOwnerBookingStatus);
 
 module.exports = router;

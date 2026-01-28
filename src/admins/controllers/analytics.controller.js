@@ -440,6 +440,7 @@ async function getOccupancyReport(req, res) {
 async function getAnalyticsOverview(req, res) {
   try {
     const days = resolveDaysFromQuery(req.query);
+    const { city, category, status } = req.query;
 
     const now = new Date();
     const start = new Date(now);
@@ -447,16 +448,39 @@ async function getAnalyticsOverview(req, res) {
     start.setDate(start.getDate() - (days - 1));
     const end = new Date(now);
 
-    const bookings = await Booking.find({
+    // Build booking filter
+    const bookingFilter = {
       createdAt: { $gte: start, $lte: end },
       status: { $in: ["paid", "confirmed", "completed"] },
-    })
+    };
+
+    // Add status filter if specified
+    if (status && status !== "all") {
+      bookingFilter.status = status;
+    }
+
+    const bookings = await Booking.find(bookingFilter)
       .populate({
         path: "listingId",
         model: "Listing",
         select: "venue city brand category scope status",
       })
       .lean();
+
+    // Apply listing-based filters (city, category)
+    const filteredBookings = bookings.filter((b) => {
+      if (!b.listingId) return false;
+      
+      if (city && city !== "all" && b.listingId.city !== city) {
+        return false;
+      }
+      
+      if (category && category !== "all" && b.listingId.category !== category) {
+        return false;
+      }
+      
+      return true;
+    });
 
     const getListingCategory = (b) => b?.listingId?.category || "Workspace";
     const getGross = (b) =>
@@ -470,19 +494,19 @@ async function getAnalyticsOverview(req, res) {
 
     let totalRevenue = 0;
 
-    bookings.forEach((b) => {
+    filteredBookings.forEach((b) => {
       const created = b.createdAt ? new Date(b.createdAt) : new Date();
       const key = isoDayKey(created);
       const gross = getGross(b);
-      const category = getListingCategory(b);
+      const cat = getListingCategory(b);
       const clientId = getClientId(b);
 
       totalRevenue += gross;
 
       bookingsMapByDay.set(key, (bookingsMapByDay.get(key) || 0) + 1);
       bookingsByTypeMap.set(
-        category,
-        (bookingsByTypeMap.get(category) || 0) + 1
+        cat,
+        (bookingsByTypeMap.get(cat) || 0) + 1
       );
 
       if (clientId) activeUserSet.add(clientId);
@@ -531,7 +555,7 @@ async function getAnalyticsOverview(req, res) {
     res.json({
       permissionError: false,
       avgOccupancy: `${avgOccupancy}%`,
-      totalBookings: bookings.length,
+      totalBookings: filteredBookings.length,
       totalRevenue,
       totalRevenueFormatted: formatPeso(totalRevenue),
       activeUsers: activeUserSet.size,
@@ -900,20 +924,52 @@ async function getAnalyticsPrescriptive(req, res) {
 async function getDemographicsAnalytics(req, res) {
   try {
     const days = resolveDaysFromQuery(req.query);
+    const { city, category, status } = req.query;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
+    // Build listing filter
+    const listingFilter = { status: { $ne: "archived" } };
+    if (city && city !== "all") {
+      listingFilter.city = city;
+    }
+    if (category && category !== "all") {
+      listingFilter.category = category;
+    }
+
     // Get all listings with their demographics
-    const listings = await Listing.find({ status: { $ne: "archived" } })
-      .select("idealFor workStyle industries")
+    const listings = await Listing.find(listingFilter)
+      .select("idealFor workStyle industries city category")
       .lean();
 
-    // Get bookings within date range with listing demographics
-    const bookings = await Booking.find({
+    // Build booking filter
+    const bookingFilter = {
       createdAt: { $gte: cutoff },
       status: { $in: ["paid", "confirmed", "completed", "checked_in"] }
-    })
-      .populate("listingId", "idealFor workStyle industries")
+    };
+    
+    if (status && status !== "all") {
+      bookingFilter.status = status;
+    }
+
+    // Get bookings within date range with listing demographics
+    const bookings = await Booking.find(bookingFilter)
+      .populate("listingId", "idealFor workStyle industries city category")
       .lean();
+
+    // Apply listing-based filters to bookings
+    const filteredBookings = bookings.filter((b) => {
+      if (!b.listingId) return false;
+      
+      if (city && city !== "all" && b.listingId.city !== city) {
+        return false;
+      }
+      
+      if (category && category !== "all" && b.listingId.category !== category) {
+        return false;
+      }
+      
+      return true;
+    });
 
     // Initialize counters
     const listingsByIdealFor = {};
@@ -952,7 +1008,7 @@ async function getDemographicsAnalytics(req, res) {
     });
 
     // Count bookings and revenue by demographics
-    bookings.forEach(booking => {
+    filteredBookings.forEach(booking => {
       const listing = booking.listingId;
       if (!listing) return;
 
@@ -987,7 +1043,7 @@ async function getDemographicsAnalytics(req, res) {
 
     // Calculate trends over time (monthly)
     const monthlyTrends = {};
-    bookings.forEach(booking => {
+    filteredBookings.forEach(booking => {
       const listing = booking.listingId;
       if (!listing) return;
 
@@ -1082,7 +1138,7 @@ async function getDemographicsAnalytics(req, res) {
           mostPopularIdealFor,
           mostPopularWorkStyle,
           topIndustry,
-          totalBookings: bookings.length
+          totalBookings: filteredBookings.length
         }
       }
     });
