@@ -4,6 +4,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const mongoSanitize = require("express-mongo-sanitize");
 const { connectDB } = require("./src/config/db");
 
 const app = express();
@@ -26,6 +27,14 @@ app.use(
 
 app.use(express.json());
 app.use(cookieParser());
+
+// Security: Sanitize data to prevent MongoDB injection attacks
+app.use(mongoSanitize({
+  replaceWith: '_', // Replace prohibited characters with underscore
+  onSanitize: ({ req, key }) => {
+    console.warn(`[Security] Sanitized key "${key}" in request from ${req.ip}`);
+  }
+}));
 
 app.get("/api/health", (_req, res) => res.json({ status: "up" }));
 app.use("/api", require("./src/routes/emailTest.routes"));

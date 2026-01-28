@@ -25,6 +25,11 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  // Force IPv4 to avoid IPv6 connection issues
+  family: 4,
+  // Add connection timeout
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
 });
 
 async function sendVerificationEmail(to, code) {

@@ -9,6 +9,7 @@ const {
   getAnalyticsOverview,
   getAnalyticsForecast,
   getAnalyticsPrescriptive,
+  getDemographicsAnalytics,
 } = require("../controllers/analytics.controller");
 
 router.get("/income", requireAuth, requireAdmin, getIncomeAnalytics);
@@ -18,5 +19,7 @@ router.get("/overview", requireAuth, requireAdmin, getAnalyticsOverview);
 router.get("/forecast", requireAuth, requireAdmin, getAnalyticsForecast);
 
 router.get("/prescriptive", requireAuth, requireAdmin, getAnalyticsPrescriptive);
+
+router.get("/demographics", requireAuth, requireAdmin, getDemographicsAnalytics);
 
 module.exports = router;

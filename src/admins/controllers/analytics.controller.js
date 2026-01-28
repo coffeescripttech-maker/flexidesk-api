@@ -892,10 +892,211 @@ async function getAnalyticsPrescriptive(req, res) {
   }
 }
 
+/**
+ * GET /admin/analytics/demographics
+ * Get demographics analytics showing booking patterns and listing distribution
+ * based on idealFor, workStyle, and industries fields
+ */
+async function getDemographicsAnalytics(req, res) {
+  try {
+    const days = resolveDaysFromQuery(req.query);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Get all listings with their demographics
+    const listings = await Listing.find({ status: { $ne: "archived" } })
+      .select("idealFor workStyle industries")
+      .lean();
+
+    // Get bookings within date range with listing demographics
+    const bookings = await Booking.find({
+      createdAt: { $gte: cutoff },
+      status: { $in: ["paid", "confirmed", "completed", "checked_in"] }
+    })
+      .populate("listingId", "idealFor workStyle industries")
+      .lean();
+
+    // Initialize counters
+    const listingsByIdealFor = {};
+    const listingsByWorkStyle = {};
+    const bookingsByIdealFor = {};
+    const bookingsByWorkStyle = {};
+    const revenueByIdealFor = {};
+    const revenueByWorkStyle = {};
+    const industriesMap = {};
+
+    // Count listings by demographics
+    listings.forEach(listing => {
+      // Count idealFor
+      if (listing.idealFor && Array.isArray(listing.idealFor)) {
+        listing.idealFor.forEach(ideal => {
+          listingsByIdealFor[ideal] = (listingsByIdealFor[ideal] || 0) + 1;
+        });
+      }
+
+      // Count workStyle
+      if (listing.workStyle && Array.isArray(listing.workStyle)) {
+        listing.workStyle.forEach(style => {
+          listingsByWorkStyle[style] = (listingsByWorkStyle[style] || 0) + 1;
+        });
+      }
+
+      // Count industries
+      if (listing.industries && Array.isArray(listing.industries)) {
+        listing.industries.forEach(industry => {
+          if (!industriesMap[industry]) {
+            industriesMap[industry] = { count: 0, revenue: 0, bookings: 0 };
+          }
+          industriesMap[industry].count += 1;
+        });
+      }
+    });
+
+    // Count bookings and revenue by demographics
+    bookings.forEach(booking => {
+      const listing = booking.listingId;
+      if (!listing) return;
+
+      const amount = Number(booking.amount || 0);
+
+      // Count by idealFor
+      if (listing.idealFor && Array.isArray(listing.idealFor)) {
+        listing.idealFor.forEach(ideal => {
+          bookingsByIdealFor[ideal] = (bookingsByIdealFor[ideal] || 0) + 1;
+          revenueByIdealFor[ideal] = (revenueByIdealFor[ideal] || 0) + amount;
+        });
+      }
+
+      // Count by workStyle
+      if (listing.workStyle && Array.isArray(listing.workStyle)) {
+        listing.workStyle.forEach(style => {
+          bookingsByWorkStyle[style] = (bookingsByWorkStyle[style] || 0) + 1;
+          revenueByWorkStyle[style] = (revenueByWorkStyle[style] || 0) + amount;
+        });
+      }
+
+      // Count by industries
+      if (listing.industries && Array.isArray(listing.industries)) {
+        listing.industries.forEach(industry => {
+          if (industriesMap[industry]) {
+            industriesMap[industry].bookings += 1;
+            industriesMap[industry].revenue += amount;
+          }
+        });
+      }
+    });
+
+    // Calculate trends over time (monthly)
+    const monthlyTrends = {};
+    bookings.forEach(booking => {
+      const listing = booking.listingId;
+      if (!listing) return;
+
+      const monthKey = booking.createdAt.toISOString().slice(0, 7); // YYYY-MM
+      if (!monthlyTrends[monthKey]) {
+        monthlyTrends[monthKey] = {};
+      }
+
+      if (listing.idealFor && Array.isArray(listing.idealFor)) {
+        listing.idealFor.forEach(ideal => {
+          monthlyTrends[monthKey][ideal] = (monthlyTrends[monthKey][ideal] || 0) + 1;
+        });
+      }
+    });
+
+    // Convert monthly trends to array
+    const trendsOverTime = Object.keys(monthlyTrends)
+      .sort()
+      .map(month => ({
+        month,
+        ...monthlyTrends[month]
+      }));
+
+    // Get top industries
+    const topIndustries = Object.entries(industriesMap)
+      .map(([name, data]) => ({
+        name,
+        listingCount: data.count,
+        bookingCount: data.bookings,
+        revenue: data.revenue
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    // Calculate metrics
+    const totalListings = listings.length;
+    const listingsWithDemographics = listings.filter(
+      l => (l.idealFor && l.idealFor.length > 0) || 
+           (l.workStyle && l.workStyle.length > 0) ||
+           (l.industries && l.industries.length > 0)
+    ).length;
+    const listingsWithoutDemographics = totalListings - listingsWithDemographics;
+
+    // Find most popular
+    const mostPopularIdealFor = Object.entries(bookingsByIdealFor)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || "none";
+    const mostPopularWorkStyle = Object.entries(bookingsByWorkStyle)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || "none";
+    const topIndustry = topIndustries[0]?.name || "none";
+
+    // Calculate average bookings per demographic
+    const totalDemographicBookings = Object.values(bookingsByIdealFor).reduce((sum, val) => sum + val, 0);
+    const uniqueDemographics = Object.keys(bookingsByIdealFor).length;
+    const avgBookingsPerDemographic = uniqueDemographics > 0 
+      ? (totalDemographicBookings / uniqueDemographics).toFixed(1)
+      : 0;
+
+    // Calculate total revenue
+    const totalRevenue = Object.values(revenueByIdealFor).reduce((sum, val) => sum + val, 0);
+
+    res.json({
+      success: true,
+      data: {
+        // Listing distribution
+        listingsByIdealFor,
+        listingsByWorkStyle,
+        
+        // Booking patterns
+        bookingsByIdealFor,
+        bookingsByWorkStyle,
+        
+        // Revenue
+        revenueByIdealFor,
+        revenueByWorkStyle,
+        totalRevenue,
+        
+        // Industries
+        topIndustries,
+        
+        // Trends
+        trendsOverTime,
+        
+        // Metrics
+        metrics: {
+          totalListings,
+          listingsWithDemographics,
+          listingsWithoutDemographics,
+          percentageWithDemographics: totalListings > 0 
+            ? ((listingsWithDemographics / totalListings) * 100).toFixed(1)
+            : 0,
+          avgBookingsPerDemographic,
+          mostPopularIdealFor,
+          mostPopularWorkStyle,
+          topIndustry,
+          totalBookings: bookings.length
+        }
+      }
+    });
+  } catch (err) {
+    console.error("getDemographicsAnalytics error", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
 module.exports = {
   getIncomeAnalytics,
   getOccupancyReport,
   getAnalyticsOverview,
   getAnalyticsForecast,
   getAnalyticsPrescriptive,
+  getDemographicsAnalytics,
 };

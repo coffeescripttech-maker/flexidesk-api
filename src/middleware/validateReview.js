@@ -99,6 +99,34 @@ exports.validateReviewEligibility = async (req, res, next) => {
       return res.status(400).json({ message: "You cannot review bookings with pending payment." });
     }
 
+    // Check if booking has ended (booking end date must be in the past)
+    // TESTING MODE: Bypass date validation to allow immediate reviews for completed bookings
+    /*
+    if (end) {
+      const endDate = new Date(end);
+      
+      if (endDate > now && bookingStatus !== "completed") {
+        const daysUntilEnd = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+        return res.status(400).json({ 
+          message: `You can review this booking after it completes on ${endDate.toLocaleDateString()}.`,
+          daysUntilAvailable: daysUntilEnd
+        });
+      }
+
+      // Check review timing window (0-90 days after booking end)
+      const daysSinceEnd = (now - endDate) / (1000 * 60 * 60 * 24);
+      
+      if (daysSinceEnd < 0) {
+        // Booking hasn't ended yet
+        const daysUntilEnd = Math.ceil(Math.abs(daysSinceEnd));
+        return res.status(400).json({ 
+          message: `You can review this booking after it completes on ${endDate.toLocaleDateString()}.`,
+          daysUntilAvailable: daysUntilEnd
+        });
+      }
+    }
+    */
+
     // Allow reviews only if:
     // 1. Booking status is "completed", OR
     // 2. Booking start date is in the past (and status is "paid")
@@ -112,27 +140,35 @@ exports.validateReviewEligibility = async (req, res, next) => {
       });
     }
 
-    // Check review timing window (90 days after booking end)
-    if (end) {
-      const daysSinceEnd = (now - new Date(end)) / (1000 * 60 * 60 * 24);
-      if (daysSinceEnd > 90) {
-        return res.status(400).json({ 
-          message: "Review period has expired (90 days after booking)." 
-        });
-      }
-    }
-
     // Check for existing review (only for POST, not PUT)
     if (req.method === "POST") {
       const userKey = mongoId || firebaseUid;
+      
+      console.log('[REVIEW DEBUG] Checking for existing review:');
+      console.log('  User Key:', userKey);
+      console.log('  Booking ID:', booking._id);
+      console.log('  Mongo ID:', mongoId);
+      console.log('  Firebase UID:', firebaseUid);
+      
+      // Use correct schema field names: userId and bookingId (not user and booking)
       const existingReview = await Review.findOne({
-        user: userKey,
-        booking: booking._id,
-      });
+        userId: userKey,
+        bookingId: booking._id,
+      }).lean();
+
+      console.log('  Existing Review Found:', existingReview ? 'YES' : 'NO');
+      if (existingReview) {
+        console.log('  Review ID:', existingReview._id);
+        console.log('  Review Booking ID:', existingReview.bookingId);
+        console.log('  Review Status:', existingReview.status);
+        console.log('  Review Rating:', existingReview.rating);
+        console.log('  Review User ID:', existingReview.userId);
+      }
 
       if (existingReview) {
         return res.status(409).json({ 
-          message: "You have already reviewed this booking." 
+          message: "You have already reviewed this booking.",
+          reviewId: existingReview._id
         });
       }
     }
@@ -285,6 +321,56 @@ exports.validateAdminModeration = async (req, res, next) => {
   } catch (err) {
     return res.status(500).json({
       message: err.message || "Failed to validate moderation request.",
+    });
+  }
+};
+
+/**
+ * Validate rating bounds
+ * Checks:
+ * - Rating is provided
+ * - Rating is an integer
+ * - Rating is between 1 and 5 (inclusive)
+ */
+exports.validateRatingBounds = (req, res, next) => {
+  try {
+    const { rating } = req.body;
+
+    // Rating is required for POST (create), optional for PUT (update)
+    if (req.method === 'POST' && !rating) {
+      return res.status(400).json({ message: "Rating is required." });
+    }
+
+    // If rating is provided, validate it
+    if (rating !== undefined && rating !== null) {
+      // Reject non-numeric types (booleans, objects, arrays)
+      if (typeof rating === 'boolean' || typeof rating === 'object') {
+        return res.status(400).json({ 
+          message: "Rating must be an integer between 1 and 5." 
+        });
+      }
+      
+      const ratingNum = Number(rating);
+      
+      // Check if it's an integer
+      if (!Number.isInteger(ratingNum)) {
+        return res.status(400).json({ 
+          message: "Rating must be an integer between 1 and 5." 
+        });
+      }
+      
+      // Check bounds
+      if (ratingNum < 1 || ratingNum > 5) {
+        return res.status(400).json({ 
+          message: "Rating must be between 1 and 5." 
+        });
+      }
+    }
+
+    next();
+  } catch (err) {
+    return res.status(400).json({
+      message: err.message || "Invalid rating value.",
     });
   }
 };

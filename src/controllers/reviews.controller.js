@@ -32,10 +32,10 @@ function resolveAuthIds(req) {
 
 const recalcListingRating = async (listingId) => {
   const [stats] = await Review.aggregate([
-    { $match: { listing: listingId, status: "visible" } },
+    { $match: { listingId: listingId, status: "visible" } },
     {
       $group: {
-        _id: "$listing",
+        _id: "$listingId",
         avgRating: { $avg: "$rating" },
         count: { $sum: 1 },
       },
@@ -74,6 +74,20 @@ exports.createForBooking = async (req, res) => {
 
     if (!rating) {
       return res.status(400).json({ message: "Rating is required." });
+    }
+
+    // Validate rating bounds (must be integer between 1-5)
+    // Reject non-numeric types (booleans, objects, arrays)
+    if (typeof rating === 'boolean' || typeof rating === 'object') {
+      return res.status(400).json({ message: "Rating must be an integer between 1 and 5." });
+    }
+    
+    const ratingNum = Number(rating);
+    if (!Number.isInteger(ratingNum)) {
+      return res.status(400).json({ message: "Rating must be an integer between 1 and 5." });
+    }
+    if (ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({ message: "Rating must be between 1 and 5." });
     }
 
     const booking = await Booking.findById(bookingId).populate("listingId");
@@ -145,8 +159,8 @@ exports.createForBooking = async (req, res) => {
     }
 
     let review = await Review.findOne({
-      user: reviewUserKey,
-      booking: booking._id,
+      userId: reviewUserKey,
+      bookingId: booking._id,
     });
 
     if (review) {
@@ -161,10 +175,15 @@ exports.createForBooking = async (req, res) => {
       
       await review.save();
     } else {
+      // Get owner ID from listing
+      const listing = await Listing.findById(listingId);
+      const ownerId = listing?.owner || listing?.ownerId || listing?.userId;
+      
       review = await Review.create({
-        user: reviewUserKey,
-        listing: listingId,
-        booking: booking._id,
+        userId: reviewUserKey,
+        listingId: listingId,
+        bookingId: booking._id,
+        ownerId: ownerId,
         rating: Number(rating),
         comment: comment || "",
         images: images,
@@ -233,7 +252,7 @@ exports.listForListing = async (req, res) => {
         break;
     }
 
-    const query = { listing: listingId };
+    const query = { listingId: listingId };
     if (statusFilter) query.status = statusFilter;
 
     // Get total count for pagination
@@ -241,7 +260,7 @@ exports.listForListing = async (req, res) => {
     const totalPages = Math.ceil(total / limit);
 
     const reviews = await Review.find(query)
-      .populate("user", "name fullName firstName avatar")
+      .populate("userId", "name fullName firstName avatar")
       .sort(sortQuery)
       .skip(skip)
       .limit(limit)
@@ -302,15 +321,15 @@ exports.myReviewedBookings = async (req, res) => {
     if (!bookingIds.length) return res.json({ bookingIds: [] });
 
     const rows = await Review.find({
-      user: userKey,
-      booking: { $in: bookingIds },
+      userId: userKey,
+      bookingId: { $in: bookingIds },
       status: { $ne: "deleted" },
     })
-      .select("booking")
+      .select("bookingId")
       .lean();
 
     return res.json({
-      bookingIds: rows.map((r) => String(r.booking)),
+      bookingIds: rows.map((r) => String(r.bookingId)),
     });
   } catch (err) {
     return res.status(500).json({
@@ -357,6 +376,11 @@ exports.updateReview = async (req, res) => {
 
     // Validate rating if provided
     if (rating !== undefined) {
+      // Reject non-numeric types (booleans, objects, arrays)
+      if (typeof rating === 'boolean' || typeof rating === 'object') {
+        return res.status(400).json({ message: "Rating must be an integer between 1 and 5." });
+      }
+      
       const ratingNum = Number(rating);
       if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
         return res.status(400).json({ message: "Rating must be an integer between 1 and 5." });

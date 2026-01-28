@@ -1136,6 +1136,7 @@ async function createBookingIntent(req, res) {
 
     const booking = await Booking.create({
       userId: me,
+      ownerId: listing.owner,
       listingId,
       startDate,
       endDate,

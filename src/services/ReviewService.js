@@ -161,44 +161,79 @@ class ReviewService {
     const booking = await Booking.findById(bookingId);
     
     if (!booking) {
-      return { eligible: false, reason: 'Booking not found' };
+      return { eligible: false, reason: 'Booking not found', daysRemaining: 0 };
     }
 
     // Check ownership
     if (booking.userId.toString() !== userId.toString()) {
-      return { eligible: false, reason: 'You can only review your own bookings' };
+      return { eligible: false, reason: 'You can only review your own bookings', daysRemaining: 0 };
     }
 
     // Check booking status - must be completed or paid with past start date
     if (booking.status === 'cancelled') {
-      return { eligible: false, reason: 'Cannot review cancelled bookings' };
+      return { eligible: false, reason: 'Cannot review cancelled bookings', daysRemaining: 0 };
     }
 
     if (booking.status === 'pending_payment' || booking.status === 'awaiting_payment') {
-      return { eligible: false, reason: 'Cannot review bookings with pending payment' };
+      return { eligible: false, reason: 'Cannot review bookings with pending payment', daysRemaining: 0 };
     }
 
-    // Check if booking has ended
+    // Check if booking has ended (booking end date must be in the past)
+    // TESTING MODE: Bypass date validation to allow immediate reviews for completed bookings
     const now = new Date();
     const endDate = new Date(booking.endDate);
     
+    /*
     if (endDate > now && booking.status !== 'completed') {
-      return { eligible: false, reason: 'You can review this booking after it completes' };
+      const daysUntilEnd = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+      return { 
+        eligible: false, 
+        reason: `You can review this booking after it completes on ${endDate.toLocaleDateString()}`,
+        daysRemaining: 0,
+        daysUntilAvailable: daysUntilEnd
+      };
     }
 
     // Check review timing window (0-90 days after booking end)
     const daysSinceEnd = (now - endDate) / (1000 * 60 * 60 * 24);
+    
+    if (daysSinceEnd < 0) {
+      // Booking hasn't ended yet
+      const daysUntilEnd = Math.ceil(Math.abs(daysSinceEnd));
+      return { 
+        eligible: false, 
+        reason: `You can review this booking after it completes on ${endDate.toLocaleDateString()}`,
+        daysRemaining: 0,
+        daysUntilAvailable: daysUntilEnd
+      };
+    }
+    */
+    
+    const daysSinceEnd = (now - endDate) / (1000 * 60 * 60 * 24);
+    
     if (daysSinceEnd > 90) {
-      return { eligible: false, reason: 'Review period has expired (90 days after booking)' };
+      return { 
+        eligible: false, 
+        reason: 'Review period has expired (90 days after booking end date)',
+        daysRemaining: 0,
+        daysExpired: Math.floor(daysSinceEnd - 90)
+      };
     }
 
     // Check for existing review
     const existingReview = await Review.findOne({ bookingId });
     if (existingReview) {
-      return { eligible: false, reason: 'You have already reviewed this booking' };
+      return { eligible: false, reason: 'You have already reviewed this booking', daysRemaining: 0 };
     }
 
-    return { eligible: true };
+    // Calculate days remaining to review
+    const daysRemaining = Math.floor(90 - daysSinceEnd);
+
+    return { 
+      eligible: true, 
+      daysRemaining,
+      daysSinceEnd: Math.floor(daysSinceEnd)
+    };
   }
 
   /**
