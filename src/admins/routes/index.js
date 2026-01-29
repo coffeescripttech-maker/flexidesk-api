@@ -29,6 +29,7 @@ router.use("/cases", require("./cases.routes"));
 router.use("/reports", require("./reports.route"));
 router.use("/bookings", require("./bookings.routes"));
 router.use("/", require("./reviews.routes"));
+router.use("/", require("./cancellations.routes"));
 
 router.get("/_ping", (_req, res) => res.json({ status: "ok" }));
 

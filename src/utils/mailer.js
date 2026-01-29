@@ -28,19 +28,25 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// Verify connection on startup
-transporter
-  .verify()
-  .then(() => {
-    console.log("[MAILER] SMTP connection verified");
-  })
-  .catch((err) => {
-    console.error("[MAILER] SMTP verification failed:", {
-      message: err.message,
-      code: err.code,
-      command: err.command,
+// Verify connection on startup (skip in development if no SMTP configured)
+if (process.env.NODE_ENV === 'production' && MAIL_HOST) {
+  transporter
+    .verify()
+    .then(() => {
+      console.log("[MAILER] SMTP connection verified");
+    })
+    .catch((err) => {
+      console.error("[MAILER] SMTP verification failed:", {
+        message: err.message,
+        code: err.code,
+        command: err.command,
+      });
     });
-  });
+} else if (MAIL_HOST) {
+  console.log("[MAILER] SMTP verification skipped in development");
+} else {
+  console.log("[MAILER] No SMTP configuration found - emails will not be sent");
+}
 
 async function sendMail({ to, subject, html }) {
   try {
