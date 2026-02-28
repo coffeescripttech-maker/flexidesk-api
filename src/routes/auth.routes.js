@@ -2,7 +2,7 @@
 const router = require("express").Router();
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
-const { signJwt } = require("../utils/jwt");
+const { signJwt, signRefreshToken, verifyRefreshToken } = require("../utils/jwt");
 const User = require("../models/User");
 
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -303,8 +303,16 @@ router.post("/login", async (req, res) => {
       role: user.role,
     });
 
+    const refreshToken = signRefreshToken({
+      uid: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
     res.json({
       token,
+      refreshToken,
+      expiresIn: "7d",
       user: {
         id: user.id,
         fullName: user.fullName,
@@ -320,3 +328,32 @@ router.post("/login", async (req, res) => {
 });
 
 module.exports = router;
+
+// Refresh token endpoint
+router.post("/refresh", async (req, res) => {
+  try {
+    const refreshToken = req.body.refreshToken || req.cookies.refresh_token;
+    
+    if (!refreshToken) {
+      return res.status(401).json({ error: "No refresh token provided" });
+    }
+
+    // Verify refresh token
+    const decoded = verifyRefreshToken(refreshToken);
+    
+    // Generate new access token
+    const newAccessToken = signJwt({
+      uid: decoded.uid,
+      email: decoded.email,
+      role: decoded.role
+    });
+
+    res.json({ 
+      token: newAccessToken,
+      expiresIn: "7d"
+    });
+  } catch (err) {
+    console.error("Token refresh error:", err.message);
+    res.status(401).json({ error: "Invalid or expired refresh token" });
+  }
+});
